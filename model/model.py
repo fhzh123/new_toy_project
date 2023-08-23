@@ -38,20 +38,22 @@ class TransformerModel(nn.Module):
         self.decoder_model_type = decoder_model_type
         decoder_model_name = return_model_name(self.decoder_model_type)
         decoder, decoder_model_config = decoder_model_setting(decoder_model_name, self.isPreTrain)
-
+        
         self.vocab_num = decoder_model_config.vocab_size
+        self.d_hidden = decoder_model_config.d_model
+        self.d_embedding = int(self.d_hidden / 2)
+
         self.decoder = decoder
 
-        # Augmenter Model Setting
-        self.decoder = decoder
+        # Linear Model Setting
         self.decoder_linear = nn.Linear(self.d_hidden, self.d_embedding)
         self.decoder_norm = nn.LayerNorm(self.d_embedding, eps=1e-12)
-        self.decoder_augmenter = nn.Linear(self.d_embedding, self.vocab_num)
+        self.decoder_linear2 = nn.Linear(self.d_embedding, self.vocab_num)
 
         # Tokenizer Setting
         self.tokenizer = AutoTokenizer.from_pretrained(decoder_model_name)
         self.pad_idx = self.tokenizer.pad_token_id
-        self.decoder_start_token_id = self.decoder_model_config.decoder_start_token_id
+        self.decoder_start_token_id = decoder_model_config.decoder_start_token_id
         if self.decoder_model_type == 'bert':
             self.bos_idx = self.tokenizer.cls_token_id
             self.eos_idx = self.tokenizer.sep_token_id

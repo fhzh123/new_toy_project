@@ -22,8 +22,6 @@ from utils.optimizer_utils import optimizer_select, scheduler_select
 
 def training(args):
 
-    write_log(logger, 'Start training!')
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     #===================================#
@@ -98,17 +96,16 @@ def training(args):
     }
     write_log(logger, f"Total number of trainingsets iterations - {len(dataset_dict['train'])}, {len(dataloader_dict['train'])}")
 
-        
     model = TransformerModel(encoder_model_type=args.encoder_model_type, decoder_model_type=args.decoder_model_type,
                              isPreTrain=args.isPreTrain, dropout=args.dropout)
     model.to(device)
 
     # 3) Optimizer & Learning rate scheduler setting
-    optimizer = optimizer_select(optimizer_model=args.cls_optimizer, model=model, lr=args.cls_lr, w_decay=args.w_decay)
-    scheduler = scheduler_select(phase='training', scheduler_model=args.cls_scheduler, optimizer=optimizer, dataloader_len=len(dataloader_dict['train']), args=args)
+    optimizer = optimizer_select(optimizer_model=args.optimizer, model=model, lr=args.lr, w_decay=args.w_decay)
+    scheduler = scheduler_select(scheduler_model=args.scheduler, optimizer=optimizer, dataloader_len=len(dataloader_dict['train']), args=args)
 
     cudnn.benchmark = True
-    criterion = nn.CrossEntropyLoss(label_smoothing=args.cls_label_smoothing_eps).to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing_eps).to(device)
 
     # 3) Model resume
     start_epoch = 0

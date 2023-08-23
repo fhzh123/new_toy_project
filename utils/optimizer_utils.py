@@ -30,14 +30,7 @@ def optimizer_select(optimizer_model, model, lr, w_decay):
         raise Exception("Choose optimizer in ['AdamW', 'Adam', 'SGD', 'Ralamb']")
     return optimizer
 
-def shceduler_select(phase, scheduler_model, optimizer, dataloader_len, args):
-
-    if phase == 'cls':
-        num_epochs = args.aug_cls_num_epochs
-    elif phase == 'aug':
-        num_epochs = args.aug_recon_num_epochs
-    elif phase == 'training':
-        num_epochs = args.training_num_epochs
+def scheduler_select(scheduler_model, optimizer, dataloader_len, args):
 
     # Scheduler setting
     if scheduler_model == 'constant':
