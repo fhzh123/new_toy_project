@@ -1,5 +1,14 @@
 import os
+import torch
+import random
 import argparse
+import numpy as np
+
+def set_random_seed(seed: int):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
 def str2bool(v):
     if isinstance(v, bool):

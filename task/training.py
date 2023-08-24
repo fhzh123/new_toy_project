@@ -15,7 +15,7 @@ from transformers import AutoTokenizer
 # Custom Modules
 from model.dataset import CustomDataset
 from model.model import TransformerModel
-from utils import TqdmLoggingHandler, write_log, get_tb_exp_name
+from utils.tqdm import TqdmLoggingHandler, write_log
 from utils.model_utils import return_model_name
 from utils.train_utils import input_to_device
 from utils.optimizer_utils import optimizer_select, scheduler_select
@@ -97,6 +97,7 @@ def training(args):
     write_log(logger, f"Total number of trainingsets iterations - {len(dataset_dict['train'])}, {len(dataloader_dict['train'])}")
 
     model = TransformerModel(encoder_model_type=args.encoder_model_type, decoder_model_type=args.decoder_model_type,
+                             src_vocab_num=src_vocab_num, trg_vocab_num=trg_vocab_num,
                              isPreTrain=args.isPreTrain, dropout=args.dropout)
     model.to(device)
 
@@ -105,7 +106,7 @@ def training(args):
     scheduler = scheduler_select(scheduler_model=args.scheduler, optimizer=optimizer, dataloader_len=len(dataloader_dict['train']), args=args)
 
     cudnn.benchmark = True
-    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing_eps).to(device)
+    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing_eps, ignore_index=model.pad_idx).to(device)
 
     # 3) Model resume
     start_epoch = 0
@@ -146,14 +147,19 @@ def training(args):
             encoder_out = model.encode(src_input_ids=src_sequence, src_attention_mask=src_att)
 
             # PCA
-            # encoder_out = model.pca_reduction()
+            if args.pca_reduction:
+                encoder_out = model.pca_reduction(encoder_hidden_states=encoder_out, encoder_attention_mask=src_att)
+                src_att = None
 
             # Decoding
             decoder_out = model.decode(trg_input_ids=trg_sequence, encoder_hidden_states=encoder_out,
                                        encoder_attention_mask=src_att)
 
             # Loss Backward
-            train_loss = criterion(decoder_out, trg_sequence)
+            decoder_out_view = decoder_out.view(-1, trg_vocab_num)
+            trg_sequence_view = trg_sequence.view(-1)
+
+            train_loss = criterion(decoder_out_view, trg_sequence_view)
             train_loss.backward()
             if args.clip_grad_norm > 0:
                 clip_grad_norm_(model.parameters(), args.clip_grad_norm)
@@ -162,12 +168,12 @@ def training(args):
 
             # Print loss value only training
             if i == 0 or i % args.print_freq == 0 or i == len(dataloader_dict['train'])-1:
-                train_acc = (decoder_out.argmax(dim=1) == trg_sequence).sum() / len(trg_sequence)
+                train_acc = (decoder_out_view.argmax(dim=1)[trg_sequence_view != 0] == trg_sequence_view[trg_sequence_view != 0]).sum() / (trg_sequence_view != 0).sum()
                 iter_log = "[Epoch:%03d][%03d/%03d] train_loss:%03.2f | train_accuracy:%03.2f | learning_rate:%1.6f |spend_time:%02.2fmin" % \
                     (epoch, i, len(dataloader_dict['train'])-1, train_loss.item(), train_acc.item(), optimizer.param_groups[0]['lr'], (time() - start_time_e) / 60)
                 write_log(logger, iter_log)
 
-            if args.debuging_mode:
+            if args.debugging_mode:
                 break
 
         write_log(logger, 'Validation start...')
@@ -186,41 +192,42 @@ def training(args):
                 encoder_out = model.encode(src_input_ids=src_sequence, src_attention_mask=src_att)
 
                 # PCA
-                # encoder_out = model.pca_reduction()
+                if args.pca_reduction:
+                    encoder_out = model.pca_reduction(encoder_hidden_states=encoder_out, encoder_attention_mask=src_att)
+                    src_att = None
 
                 # Decoding
                 decoder_out = model.decode(trg_input_ids=trg_sequence, encoder_hidden_states=encoder_out,
                                         encoder_attention_mask=src_att)
 
             # Loss and Accuracy Check
-            val_acc += (classifier_out.argmax(dim=1) == trg_label.argmax(dim=1)).sum() / len(trg_label)
-            val_cls_loss += cls_loss
-            val_mmd_loss += mmd_loss
+            decoder_out_view = decoder_out.view(-1, trg_vocab_num)
+            trg_sequence_view = trg_sequence.view(-1)
 
-            if args.debuging_mode:
+            val_acc += (decoder_out_view.argmax(dim=1)[trg_sequence_view != 0] == trg_sequence_view[trg_sequence_view != 0]).sum() / (trg_sequence_view != 0).sum()
+            val_loss += criterion(decoder_out_view, trg_sequence_view)
+
+            if args.debugging_mode:
                 break
 
         # val_mmd_loss /= len(dataloader_dict['valid'])
-        val_cls_loss /= len(dataloader_dict['valid'])
+        val_loss /= len(dataloader_dict['valid'])
         val_acc /= len(dataloader_dict['valid'])
-        write_log(logger, 'Augmenter Classifier Validation MMD Loss: %3.3f' % val_mmd_loss)
-        write_log(logger, 'Augmenter Classifier Validation CrossEntropy Loss: %3.3f' % val_cls_loss)
+        write_log(logger, 'Augmenter Classifier Validation CrossEntropy Loss: %3.3f' % val_loss)
         write_log(logger, 'Augmenter Classifier Validation Accuracy: %3.2f%%' % (val_acc * 100))
 
-        save_file_name = os.path.join(args.model_save_path, args.data_name, args.aug_encoder_model_type, f'checkpoint_seed_{args.random_seed}.pth.tar')
-        if val_cls_loss < best_cls_val_loss:
+        save_file_name = os.path.join(args.model_save_path, args.data_name, args.encoder_model_type, f'checkpoint_pca_{args.pca_reduction}_seed_{args.random_seed}.pth.tar')
+        if val_loss < best_val_loss:
             write_log(logger, 'Model checkpoint saving...')
             torch.save({
                 'cls_training_done': False,
                 'epoch': epoch,
                 'model': model.state_dict(),
-                'aug_cls_optimizer': aug_cls_optimizer.state_dict(),
-                'aug_recon_optimizer': aug_recon_optimizer.state_dict(),
-                'aug_cls_scheduler': aug_cls_scheduler.state_dict(),
-                'aug_recon_scheduler': aug_recon_scheduler.state_dict(),
+                'optimizer': optimizer.state_dict(),
+                'scheduler': scheduler.state_dict(),
             }, save_file_name)
-            best_cls_val_loss = val_cls_loss
-            best_cls_epoch = epoch
+            best_val_loss = val_loss
+            best_epoch = epoch
         else:
-            else_log = f'Still {best_cls_epoch} epoch Loss({round(best_cls_val_loss.item(), 2)}) is better...'
+            else_log = f'Still {best_epoch} epoch Loss({round(best_val_loss.item(), 4)}) is better...'
             write_log(logger, else_log)

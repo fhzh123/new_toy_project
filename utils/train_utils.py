@@ -1,9 +1,9 @@
 def input_to_device(batch_iter, device):
 
-    src_sequence = batch_iter[0]
-    src_att = batch_iter[1]
-    trg_sequence = batch_iter[2]
-    trg_att = batch_iter[3]
+    src_sequence = batch_iter[0][0]
+    src_att = batch_iter[0][1]
+    trg_sequence = batch_iter[1][0]
+    trg_att = batch_iter[1][1]
 
     src_sequence = src_sequence.to(device, non_blocking=True)
     src_att = src_att.to(device, non_blocking=True)

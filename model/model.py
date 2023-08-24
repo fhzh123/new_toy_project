@@ -1,6 +1,7 @@
 # Import PyTorch
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 # Import Huggingface
 from transformers import AutoTokenizer
 # Import Custom Modules
@@ -8,6 +9,7 @@ from utils.model_utils import return_model_name, encoder_model_setting, decoder_
 
 class TransformerModel(nn.Module):
     def __init__(self, encoder_model_type: str = 'bart', decoder_model_type: str = 'bart', 
+                 src_vocab_num: int = 32000, trg_vocab_num: int = 32000,
                  isPreTrain: bool = True, dropout: float = 0.3):
         super().__init__()
 
@@ -39,7 +41,7 @@ class TransformerModel(nn.Module):
         decoder_model_name = return_model_name(self.decoder_model_type)
         decoder, decoder_model_config = decoder_model_setting(decoder_model_name, self.isPreTrain)
         
-        self.vocab_num = decoder_model_config.vocab_size
+        self.vocab_num = trg_vocab_num
         self.d_hidden = decoder_model_config.d_model
         self.d_embedding = int(self.d_hidden / 2)
 
@@ -73,15 +75,17 @@ class TransformerModel(nn.Module):
         return encoder_out
     
     def pca_reduction(self, encoder_hidden_states, encoder_attention_mask=None):
-        pass
+        U, S, V = torch.pca_lowrank(encoder_hidden_states.transpose(1,2))
+        pca_encoder_out = U.transpose(1,2)
+        return pca_encoder_out
         # 1. PCA 분해
         # 2. 설명력 계산
         # 3. 설명 개수 만큼 토큰 사용
         # 4. padding
     
-    def decode(self, input_ids, encoder_hidden_states=None, encoder_attention_mask=None):
+    def decode(self, trg_input_ids, encoder_hidden_states=None, encoder_attention_mask=None):
         decoder_input_ids = shift_tokens_right(
-            input_ids, self.pad_idx, self.decoder_start_token_id
+            trg_input_ids, self.pad_idx, self.decoder_start_token_id
         )
 
         decoder_outputs = self.decoder(
@@ -92,14 +96,21 @@ class TransformerModel(nn.Module):
 
         decoder_outputs = decoder_outputs['last_hidden_state'] # (batch_size, seq_len, d_hidden)
         decoder_outputs = self.dropout(F.gelu(self.decoder_linear(decoder_outputs)))
-        decoder_outputs = self.decoder_augmenter(self.decoder_norm(decoder_outputs))
+        decoder_outputs = self.decoder_linear2(self.decoder_norm(decoder_outputs))
 
         return decoder_outputs
     
-def shift_tokens_right(input_ids, pad_token_id):
-    """Shift input ids one token to the right, and wrap the last non pad token (usually <eos>)."""
-    prev_output_tokens = input_ids.clone()
-    index_of_eos = (input_ids.ne(pad_token_id).sum(dim=1) - 1).unsqueeze(-1)
-    prev_output_tokens[:, 0] = input_ids.gather(1, index_of_eos).squeeze()
-    prev_output_tokens[:, 1:] = input_ids[:, :-1]
-    return prev_output_tokens
+def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int):
+    """
+    Shift input ids one token to the right.
+    """
+    shifted_input_ids = input_ids.new_zeros(input_ids.shape)
+    shifted_input_ids[:, 1:] = input_ids[:, :-1].clone()
+    shifted_input_ids[:, 0] = decoder_start_token_id
+
+    if pad_token_id is None:
+        raise ValueError("self.model.config.pad_token_id has to be defined.")
+    # replace possible -100 values in labels by `pad_token_id`
+    shifted_input_ids.masked_fill_(shifted_input_ids == -100, pad_token_id)
+
+    return shifted_input_ids
