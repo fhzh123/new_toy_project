@@ -29,7 +29,7 @@ if __name__=='__main__':
     user_name = os.getlogin()
     parser = argparse.ArgumentParser(description='Parsing Method')
     # Task setting
-    parser.add_argument('--data_name', default='WMT2016', type=str,
+    parser.add_argument('--data_name', default='WMT2016_Multimodal', type=str,
                         help='')
     parser.add_argument('--training', action='store_true')
     parser.add_argument('--resume', action='store_true')
@@ -64,8 +64,8 @@ if __name__=='__main__':
     # Train setting
     parser.add_argument('--random_seed', default=42, type=int,
                         help='Random seed setting; Default is 42')
-    parser.add_argument('--num_epochs', default=200, type=int,
-                        help='Number of epochs; Default is 200')
+    parser.add_argument('--num_epochs', default=100, type=int,
+                        help='Number of epochs; Default is 100')
     parser.add_argument('--batch_size', default=16, type=int,
                         help='Training batch size; Default is 16')
     parser.add_argument('--num_workers', default=8, type=int,
