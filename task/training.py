@@ -125,12 +125,13 @@ def training(args):
             src_sequence, src_att, trg_sequence, trg_att  = b_iter
 
             # Encoding
-            encoder_out = model.encode(src_input_ids=src_sequence, src_attention_mask=src_att)
+            with torch.no_grad():
+                encoder_out = model.encode(src_input_ids=src_sequence, src_attention_mask=src_att)
 
-            # PCA
-            if args.pca_reduction:
-                encoder_out = model.pca_reduction(encoder_hidden_states=encoder_out, encoder_attention_mask=src_att)
-                src_att = None
+                # PCA
+                if args.pca_reduction:
+                    encoder_out = model.pca_reduction(encoder_hidden_states=encoder_out, encoder_attention_mask=src_att)
+                    src_att = None
 
             # Decoding
             decoder_out = model.decode(trg_input_ids=trg_sequence, encoder_hidden_states=encoder_out,
@@ -151,7 +152,7 @@ def training(args):
             if i == 0 or i % args.print_freq == 0 or i == len(dataloader_dict['train'])-1:
                 train_acc = (decoder_out_view.argmax(dim=1)[trg_sequence_view != 0] == trg_sequence_view[trg_sequence_view != 0]).sum() / (trg_sequence_view != 0).sum()
                 iter_log = "[Epoch:%03d][%03d/%03d] train_loss:%03.2f | train_accuracy:%03.2f | learning_rate:%1.6f |spend_time:%02.2fmin" % \
-                    (epoch, i, len(dataloader_dict['train'])-1, train_loss.item(), train_acc.item(), optimizer.param_groups[0]['lr'], (time() - start_time_e) / 60)
+                    (epoch, i, len(dataloader_dict['train'])-1, train_loss.item(), train_acc.item() * 100, optimizer.param_groups[0]['lr'], (time() - start_time_e) / 60)
                 write_log(logger, iter_log)
 
             if args.debugging_mode:
