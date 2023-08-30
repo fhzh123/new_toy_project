@@ -43,9 +43,9 @@ if __name__=='__main__':
     parser.add_argument('--result_path', default=f'/HDD/{user_name}/results/pca', type=str,
                         help='Results file path')
     # Preprocessing setting
-    parser.add_argument('--src_max_len', default=150, type=str,
+    parser.add_argument('--src_max_len', default=150, type=int,
                         help='Source input maximum length; Default is 150')
-    parser.add_argument('--trg_max_len', default=150, type=str,
+    parser.add_argument('--trg_max_len', default=150, type=int,
                         help='Target input maximum length; Default is 150')
     # Model setting
     parser.add_argument('--pca_reduction', action='store_true')

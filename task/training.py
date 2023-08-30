@@ -16,6 +16,7 @@ from transformers import AutoTokenizer
 from model.dataset import CustomDataset
 from model.model import TransformerModel
 from utils.tqdm import TqdmLoggingHandler, write_log
+from utils.data_utils import data_load
 from utils.model_utils import return_model_name
 from utils.train_utils import input_to_device
 from utils.optimizer_utils import optimizer_select, scheduler_select
@@ -41,27 +42,7 @@ def training(args):
 
     write_log(logger, "Load data...")
 
-    total_src_list, total_trg_list = dict(), dict()
-
-    data_path = os.path.join(args.data_path,'WMT/2016/multi_modal')
-
-    # 1) Train data load
-    with open(os.path.join(data_path, 'train.de'), 'r') as f:
-        total_src_list['train'] = [x.replace('\n', '') for x in f.readlines()]
-    with open(os.path.join(data_path, 'train.en'), 'r') as f:
-        total_trg_list['train'] = [x.replace('\n', '') for x in f.readlines()]
-
-    # 2) Valid data load
-    with open(os.path.join(data_path, 'val.de'), 'r') as f:
-        total_src_list['valid'] = [x.replace('\n', '') for x in f.readlines()]
-    with open(os.path.join(data_path, 'val.en'), 'r') as f:
-        total_trg_list['valid'] = [x.replace('\n', '') for x in f.readlines()]
-
-    # 3) Test data load
-    with open(os.path.join(data_path, 'test.de'), 'r') as f:
-        total_src_list['test'] = [x.replace('\n', '') for x in f.readlines()]
-    with open(os.path.join(data_path, 'test.en'), 'r') as f:
-        total_trg_list['test'] = [x.replace('\n', '') for x in f.readlines()]
+    total_src_list, total_trg_list = data_load(data_path=args.data_path, data_name=args.data_name)
 
     # tokenizer load
     src_tokenizer_name = return_model_name(args.src_tokenizer_type)
