@@ -4,6 +4,7 @@ import logging
 import numpy as np
 from tqdm import tqdm
 from time import time
+from nlgeval import NLGEval
 # Import PyTorch
 import torch
 import torch.nn as nn
@@ -16,6 +17,7 @@ from transformers import AutoTokenizer
 from model.dataset import CustomDataset
 from model.model import TransformerModel
 from utils.tqdm import TqdmLoggingHandler, write_log
+from utils.data_utils import data_load
 from utils.model_utils import return_model_name
 from utils.train_utils import input_to_device
 
@@ -61,6 +63,7 @@ def testing(args):
     # Model load
     model = TransformerModel(encoder_model_type=args.encoder_model_type, decoder_model_type=args.decoder_model_type,
                              src_vocab_num=src_vocab_num, trg_vocab_num=trg_vocab_num,
+                             src_max_len=args.src_max_len, trg_max_len=args.trg_max_len,
                              isPreTrain=args.isPreTrain, dropout=args.dropout)
     
     save_file_name = os.path.join(args.model_save_path, args.data_name, args.encoder_model_type,
@@ -69,11 +72,20 @@ def testing(args):
     model.load_state_dict(checkpoint['model'])
     model.to(device)
 
+    # Decoding strategy
+    decoding_dict = dict()
+    decoding_dict['decoding_strategy'] = 'beam'
+    decoding_dict['beam_size'] = args.beam_size
+    decoding_dict['beam_alpha'] = args.beam_alpha
+    decoding_dict['repetition_penalty'] = args.repetition_penalty
+    decoding_dict['softmax_temp'] = 1
+    hypothesis, references = list(), list()
+
     for i, batch_iter in enumerate(tqdm(test_dataloader, bar_format='{l_bar}{bar:30}{r_bar}{bar:-2b}')):
 
         # Input setting
         b_iter = input_to_device(batch_iter, device=device)
-        src_sequence, src_att, _, _  = b_iter
+        src_sequence, src_att, trg_sequence, _  = b_iter
 
         with torch.no_grad():
 
@@ -86,5 +98,28 @@ def testing(args):
                 src_att = None
 
             # Decoding
-            decoding_dict = return_decoding_dict(args)
+            # decoding_dict = return_decoding_dict(args)
             predicted = model.generate(decoding_dict=decoding_dict, encoder_hidden_states=encoder_out, encoder_attention_mask=src_att)
+
+        if i == 0:
+            print(trg_tokenizer.batch_decode(predicted)[0])
+            print(trg_tokenizer.batch_decode(trg_sequence)[0])
+
+        hypothesis.extend(trg_tokenizer.batch_decode(predicted, skip_special_tokens=True))
+        references.extend(trg_tokenizer.batch_decode(trg_sequence, skip_special_tokens=True))
+
+        if i == 10:
+            break
+
+    nlgeval = NLGEval()  # loads the models
+    print(nlgeval.compute_metrics(references, hypothesis))
+
+    # with open(os.path.join(args.result_path, f'seed_{args.random_seed}_pca_{args.pca_reduction}.txt'), 'w') as f:
+    #     for p in predicted_list:
+    #         f.write(p)
+    #         f.write('\n')
+
+    # with open(os.path.join(args.result_path, f'seed_{args.random_seed}_pca_{args.pca_reduction}.txt'), 'w') as f:
+    #     for p in predicted_list:
+    #         f.write(p)
+    #         f.write('\n')

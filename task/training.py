@@ -79,6 +79,7 @@ def training(args):
 
     model = TransformerModel(encoder_model_type=args.encoder_model_type, decoder_model_type=args.decoder_model_type,
                              src_vocab_num=src_vocab_num, trg_vocab_num=trg_vocab_num,
+                             src_max_len=args.src_max_len, trg_max_len=args.trg_max_len,
                              isPreTrain=args.isPreTrain, dropout=args.dropout)
     model.to(device)
 

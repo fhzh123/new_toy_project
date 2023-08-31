@@ -12,6 +12,7 @@ from utils.model_utils import return_model_name, encoder_model_setting, decoder_
 class TransformerModel(nn.Module):
     def __init__(self, encoder_model_type: str = 'bart', decoder_model_type: str = 'bart', 
                  src_vocab_num: int = 32000, trg_vocab_num: int = 32000,
+                 src_max_len: int = 150, trg_max_len: int = 150,
                  isPreTrain: bool = True, dropout: float = 0.3):
         super().__init__()
 
@@ -30,6 +31,8 @@ class TransformerModel(nn.Module):
         """
         self.isPreTrain = isPreTrain
         self.dropout = nn.Dropout(dropout)
+        self.src_max_len = src_max_len
+        self.trg_max_len = trg_max_len
 
         # Encoder model setting
         self.encoder_model_type = encoder_model_type
@@ -98,91 +101,100 @@ class TransformerModel(nn.Module):
 
         return decoder_outputs
     
-    def generate(self, decoding_dict:dict = dict(), encoder_hidden_states=None, encoder_attention_mask=None, 
-                 beam_size=3, beam_alpha=0.7, repetition_penalty=0.7):
+    def generate(self, decoding_dict:dict = dict(), encoder_hidden_states=None, encoder_attention_mask=None):
         
-        # Input, output setting
-        device = encoder_hidden_states.device
-        batch_size = encoder_hidden_states.size(0)
-        src_seq_size = encoder_hidden_states.size(1)
-        every_batch = torch.arange(0, beam_size * batch_size, beam_size, device=device)
-    
-        # Encoder hidden state expanding
-        encoder_hidden_states = encoder_hidden_states.unsqueeze(1) # (batch_size, 1, seq_len, d_hidden)
-        encoder_hidden_states = encoder_hidden_states.repeat(1, beam_size, 1, 1) # (batch_size, beam_size, seq_len, d_hidden)
-        encoder_hidden_states = encoder_hidden_states.view(-1, src_seq_size, self.d_hidden) # (batch_size * beam_size, seq_len, d_hidden)
+        if decoding_dict['decoding_strategy'] == 'beam':
+            # Input, output setting
+            device = encoder_hidden_states.device
+            batch_size = encoder_hidden_states.size(0)
+            src_seq_size = encoder_hidden_states.size(1)
+        
+            # Decoding dictionary
+            beam_size = decoding_dict['beam_size']
+            beam_alpha = decoding_dict['beam_alpha']
+            repetition_penalty = decoding_dict['repetition_penalty']
 
-        # Scores save vector & decoding list setting
-        scores_save = torch.zeros(beam_size * batch_size, 1).to(device) # (batch_size * beam_size, 1)
-        top_k_scores = torch.zeros(beam_size * batch_size, 1).to(device) # (batch_size * beam_size, 1)
-        complete_seqs = defaultdict(list)
-        complete_ind = set()
+            # Encoder hidden state expanding
+            encoder_hidden_states = encoder_hidden_states.unsqueeze(1) # (batch_size, 1, seq_len, d_hidden)
+            encoder_hidden_states = encoder_hidden_states.repeat(1, beam_size, 1, 1) # (batch_size, beam_size, seq_len, d_hidden)
+            encoder_hidden_states = encoder_hidden_states.view(-1, src_seq_size, self.d_hidden) # (batch_size * beam_size, seq_len, d_hidden)
 
-        # Decoding start token setting
-        seqs = torch.tensor([[self.decoder_start_token_id]], dtype=torch.long, device=device)
-        seqs = seqs.repeat(beam_size * batch_size, 1).contiguous() # (batch_size * beam_size, 1)
+            # Scores save vector & decoding list setting
+            scores_save = torch.zeros(beam_size * batch_size, 1).to(device) # (batch_size * beam_size, 1)
+            top_k_scores = torch.zeros(beam_size * batch_size, 1).to(device) # (batch_size * beam_size, 1)
+            every_batch = torch.arange(0, beam_size * batch_size, beam_size, device=device)
+            complete_seqs = defaultdict(list)
+            complete_ind = set()
 
-        for step in range(self.src_max_len):
-            # Decoding sentence
-            decoder_outputs = self.decoder(
-                input_ids=seqs,
-                encoder_hidden_states=encoder_hidden_states,
-                encoder_attention_mask=encoder_attention_mask
-            )
-            decoder_outputs = decoder_outputs['last_hidden_state']
+            # Decoding start token setting
+            seqs = torch.tensor([[self.decoder_start_token_id]], dtype=torch.long, device=device)
+            seqs = seqs.repeat(beam_size * batch_size, 1).contiguous() # (batch_size * beam_size, 1)
 
-            # Score calculate
-            scores = F.gelu(self.decoder_linear(decoder_outputs[:,-1])) # (batch_size * k, d_embedding)
-            scores = self.decoder_linear2(self.decoder_norm(scores)) # (batch_size * k, vocab_num)
-            scores = F.log_softmax(scores, dim=1) # (batch_size * k, vocab_num)
+            for step in range(self.trg_max_len):
+                # Decoding sentence
+                decoder_outputs = self.decoder(
+                    input_ids=seqs,
+                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_attention_mask=encoder_attention_mask
+                )
+                decoder_outputs = decoder_outputs['last_hidden_state']
 
-            # Add score
-            scores = top_k_scores.expand_as(scores) + scores  # (batch_size * k, vocab_num)
-            if step == 0:
-                scores = scores[::beam_size] # (batch_size, vocab_num)
-                scores[:, self.eos_idx] = float('-inf') # set eos token probability zero in first step
-                top_k_scores, top_k_words = scores.topk(beam_size, 1, True, True)  # (batch_size, k) , (batch_size, k)
-            else:
-                top_k_scores, top_k_words = scores.view(batch_size, -1).topk(beam_size, 1, True, True)
+                # Score calculate
+                scores = F.gelu(self.decoder_linear(decoder_outputs[:,-1])) # (batch_size * k, d_embedding)
+                scores = self.decoder_linear2(self.decoder_norm(scores)) # (batch_size * k, vocab_num)
+                scores = scores / decoding_dict['softmax_temp']
+                scores = F.softmax(scores, dim=1) # (batch_size * k, vocab_num)
 
-            # Previous and Next word extract
-            prev_word_inds = top_k_words // self.vocab_num # (batch_size * k, out_seq)
-            next_word_inds = top_k_words % self.vocab_num # (batch_size * k, out_seq)
-            top_k_scores = top_k_scores.view(batch_size * beam_size, -1) # (batch_size * k, out_seq)
-            top_k_words = top_k_words.view(batch_size * beam_size, -1) # (batch_size * k, out_seq)
-            seqs = seqs[prev_word_inds.view(-1) + every_batch.unsqueeze(1).repeat(1, beam_size).view(-1)] # (batch_size * k, out_seq)
-            seqs = torch.cat([seqs, next_word_inds.view(beam_size * batch_size, -1)], dim=1) # (batch_size * k, out_seq + 1)
+                # Add score
+                scores = top_k_scores.expand_as(scores) + scores  # (batch_size * k, vocab_num)
+                if step == 0:
+                    scores = scores[::beam_size] # (batch_size, vocab_num)
+                    scores[:, self.eos_idx] = float('-inf') # set eos token probability zero in first step
+                    top_k_scores, top_k_words = scores.topk(beam_size, 1, True, True)  # (batch_size, k) , (batch_size, k)
+                else:
+                    top_k_scores, top_k_words = scores.view(batch_size, -1).topk(beam_size, 1, True, True)
 
-            # Find and Save Complete Sequences Score
-            if self.eos_idx in next_word_inds:
-                eos_ind = torch.where(next_word_inds.view(-1) == self.eos_idx)
-                eos_ind = eos_ind[0].tolist()
-                complete_ind_add = set(eos_ind) - complete_ind
-                complete_ind_add = list(complete_ind_add)
-                complete_ind.update(eos_ind)
-                if len(complete_ind_add) > 0:
-                    scores_save[complete_ind_add] = top_k_scores[complete_ind_add]
-                    for ix in complete_ind_add:
-                        complete_seqs[ix] = seqs[ix].tolist()
+                # Previous and Next word extract
+                prev_word_inds = top_k_words // self.vocab_num # (batch_size * k, out_seq)
+                next_word_inds = top_k_words % self.vocab_num # (batch_size * k, out_seq)
+                top_k_scores = top_k_scores.view(batch_size * beam_size, -1) # (batch_size * k, out_seq)
+                top_k_words = top_k_words.view(batch_size * beam_size, -1) # (batch_size * k, out_seq)
+                seqs = seqs[prev_word_inds.view(-1) + every_batch.unsqueeze(1).repeat(1, beam_size).view(-1)] # (batch_size * k, out_seq)
+                seqs = torch.cat([seqs, next_word_inds.view(beam_size * batch_size, -1)], dim=1) # (batch_size * k, out_seq + 1)
 
-        # If eos token doesn't exist in sequence
-        if 0 in scores_save:
-            score_save_pos = torch.where(scores_save == 0)
-            for ix in score_save_pos[0].tolist():
-                complete_seqs[ix] = seqs[ix].tolist()
-            scores_save[score_save_pos] = top_k_scores[score_save_pos]
+                # Find and Save Complete Sequences Score
+                if self.eos_idx in next_word_inds:
+                    eos_ind = torch.where(next_word_inds.view(-1) == self.eos_idx)
+                    eos_ind = eos_ind[0].tolist()
+                    complete_ind_add = set(eos_ind) - complete_ind
+                    complete_ind_add = list(complete_ind_add)
+                    complete_ind.update(eos_ind)
+                    if len(complete_ind_add) > 0:
+                        scores_save[complete_ind_add] = top_k_scores[complete_ind_add]
+                        for ix in complete_ind_add:
+                            complete_seqs[ix] = seqs[ix].tolist()
 
-        # Beam Length Normalization
-        lp = torch.tensor([len(complete_seqs[i]) for i in range(batch_size * beam_size)], device=device)
-        lp = (((lp + beam_size) ** beam_alpha) / ((beam_size + 1) ** beam_alpha)).unsqueeze(1)
-        scores_save = scores_save / lp
+            # If eos token doesn't exist in sequence
+            if 0 in scores_save:
+                score_save_pos = torch.where(scores_save == 0)
+                for ix in score_save_pos[0].tolist():
+                    complete_seqs[ix] = seqs[ix].tolist()
+                scores_save[score_save_pos] = top_k_scores[score_save_pos]
 
-        # Predicted and Label processing
-        _, ind = scores_save.view(batch_size, beam_size, -1).max(1)
-        ind_expand = ind.view(-1) + every_batch
-        predicted = [complete_seqs[i] for i in ind_expand.tolist()]
+            # Beam Length Normalization
+            lp = torch.tensor([len(complete_seqs[i]) for i in range(batch_size * beam_size)], device=device)
+            lp = (((lp + beam_size) ** beam_alpha) / ((beam_size + 1) ** beam_alpha)).unsqueeze(1)
+            scores_save = scores_save / lp
 
-        return torch.tensor(predicted, device=device)
+            # Predicted and Label processing
+            _, ind = scores_save.view(batch_size, beam_size, -1).max(1)
+            ind_expand = ind.view(-1) + every_batch
+            predicted = [complete_seqs[i] for i in ind_expand.tolist()]
+
+            return predicted
+
+        else:
+            raise Exception('Comming Soon...')
 
 def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int):
     """

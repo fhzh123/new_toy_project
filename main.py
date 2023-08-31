@@ -4,7 +4,7 @@ import time
 import argparse
 # Import custom modules
 from task.training import training
-# from task.testing import testing
+from task.testing import testing
 # Utils
 from utils.argparser_utils import str2bool, path_check, set_random_seed
 
@@ -22,6 +22,9 @@ def main(args):
     if args.training:
         training(args)
 
+    if args.testing:
+        testing(args)
+
     # Time calculate
     print(f'Done! ; {round((time.time()-total_start_time)/60, 3)}min spend')
 
@@ -32,6 +35,7 @@ if __name__=='__main__':
     parser.add_argument('--data_name', default='WMT2016_Multimodal', type=str,
                         help='')
     parser.add_argument('--training', action='store_true')
+    parser.add_argument('--testing', action='store_true')
     parser.add_argument('--resume', action='store_true')
     # Path setting
     parser.add_argument('--data_path', default='/HDD/dataset', type=str,
@@ -84,6 +88,13 @@ if __name__=='__main__':
                         help='Label smoothing epsilon; Default is 0.01')
     parser.add_argument('--clip_grad_norm', default=5, type=int,
                         help='Gradient clipping norm setting; Default is 5')
+    # Inference setting
+    parser.add_argument('--beam_size', default=5, type=int,
+                        help="")
+    parser.add_argument('--beam_alpha', default=0.7, type=float,
+                        help="")
+    parser.add_argument('--repetition_penalty', default=0.8, type=float,
+                        help="")
     # Checking setting
     parser.add_argument('--debugging_mode', action='store_true',
                         help='')
